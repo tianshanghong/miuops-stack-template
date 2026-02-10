@@ -1,12 +1,12 @@
 # miuOps Stack Template
 
-Your private GitOps repo for deploying Docker services to a [miuOps](https://github.com/tianshanghong/miuOps)-bootstrapped server.
+Your private GitOps repo for deploying Docker services to a [miuOps](https://github.com/tianshanghong/miuops)-bootstrapped server.
 
 Push to `main` and GitHub Actions deploys your stacks via SSH.
 
 ## Prerequisites
 
-- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuOps) (Docker, Traefik network, cloudflared, firewall)
+- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuops) (Docker, Traefik network, cloudflared, firewall)
 - SSH access to the server (key-based)
 - GitHub repo created from this template
 

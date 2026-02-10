@@ -24,6 +24,7 @@ jobs:
           port: ${{ env.SSH_PORT }}
           envs: ENV_CONTENT
           script: |
+            set -e
             printf '%s\n' "$ENV_CONTENT" > /opt/stacks/.env
             chmod 600 /opt/stacks/.env
 
