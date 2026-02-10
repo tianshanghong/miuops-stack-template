@@ -81,7 +81,37 @@ networks:
 - `internal: true` networks block outbound internet (use for databases)
 - Use a plain `bridge` network (like `egress`) when a container needs outbound internet access
 
+### Backing Up Volumes
+
+The `backup` stack uses [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup) to upload tarballs to S3 on a daily schedule. To back up a volume, mount it into the backup container under `/backup/`:
+
+In `stacks/backup/docker-compose.yml`, add the volume to the `backup` service:
+
+```yaml
+services:
+  backup:
+    # ... existing config ...
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - db_data:/backup/myapp-db:ro
+
+volumes:
+  db_data:
+    external: true  # defined in the myapp stack
+```
+
+For database consistency, add labels to stop the container before backup:
+
+```yaml
+# In stacks/myapp/docker-compose.yml
+services:
+  db:
+    image: postgres:17
+    labels:
+      - docker-volume-backup.stop-during-backup=true
+```
+
 ## Included Stacks
 
 - **traefik** — Reverse proxy. Listens on 80 (redirect) and 443. Cloudflared connects to 443 with `noTLSVerify`.
-- **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup).
+- **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup). No volumes are backed up by default — mount the ones you need (see above).

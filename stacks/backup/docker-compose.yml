@@ -14,7 +14,9 @@ services:
       AWS_S3_PATH: ${BACKUP_S3_PATH:-backups}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/volumes:/backup/docker-volumes:ro
+      # Mount volumes you want to back up under /backup/:
+      #   - my_data:/backup/my_data:ro
+      # See README for the full pattern.
     networks:
       - egress
 
