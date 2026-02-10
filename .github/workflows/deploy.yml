@@ -1,0 +1,57 @@
+name: Deploy stacks
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env file
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            cat > /opt/stacks/.env << 'ENVEOF'
+            ${{ secrets.ENV_FILE }}
+            ENVEOF
+            chmod 600 /opt/stacks/.env
+
+      - name: Rsync stacks to server
+        uses: burnett01/rsync-deployments@v7
+        with:
+          switches: -avz --delete --exclude='.env'
+          path: stacks/
+          remote_path: /opt/stacks/
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          remote_port: ${{ secrets.SSH_PORT || 22 }}
+
+      - name: Deploy stacks
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            cd /opt/stacks
+
+            # Deploy Traefik first
+            echo "==> Deploying traefik"
+            docker compose -f traefik/docker-compose.yml --env-file .env up -d --remove-orphans
+
+            # Deploy remaining stacks
+            for stack in */; do
+              stack="${stack%/}"
+              [ "$stack" = "traefik" ] && continue
+              echo "==> Deploying $stack"
+              docker compose -f "$stack/docker-compose.yml" --env-file .env up -d --remove-orphans
+            done
