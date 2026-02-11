@@ -111,7 +111,49 @@ services:
       - docker-volume-backup.stop-during-backup=true
 ```
 
+### PostgreSQL + WAL-G Continuous Archiving
+
+For PostgreSQL databases, use the `postgres-walg` image (built from `images/postgres-walg/` in the metal repo) for continuous WAL archiving to S3. This runs alongside the volume backup stack — both write to the same S3 bucket under different prefixes:
+
+```
+myproject-backup/          # One bucket per project
+  db/                      # WAL-G database backups
+    myapp/                 #   per-app prefix
+      basebackups_005/
+      wal_005/
+  vol/                     # Offen volume tarballs
+    backup-2025-01-15T02-00-00.tar.gz
+```
+
+Example compose file using the `postgres-walg` image:
+
+```yaml
+services:
+  db:
+    image: ghcr.io/yourorg/postgres-walg:17
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: myapp
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      WALG_S3_PREFIX: ${WALG_S3_PREFIX}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+```
+
+**Host cron** for daily base backups (in addition to continuous WAL archiving):
+
+```
+0 3 * * * cd /opt/stacks/myapp && docker compose exec -T -u postgres db walg-backup.sh
+```
+
+**Retention**: Object Lock (Compliance mode, 30 days) prevents any deletion. S3 lifecycle transitions to Glacier after 30 days and expires after 90 days. No manual deletion is needed or possible.
+
 ## Included Stacks
 
 - **traefik** — Reverse proxy. Listens on 80 (redirect) and 443. Cloudflared connects to 443 with `noTLSVerify`.
-- **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup). No volumes are backed up by default — mount the ones you need (see above).
+- **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup). No volumes are backed up by default — mount the ones you need (see above). For PostgreSQL, use the WAL-G pattern above instead of stop-during-backup.
