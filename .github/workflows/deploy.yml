@@ -29,7 +29,7 @@ jobs:
             chmod 600 /opt/stacks/.env
 
       - name: Rsync stacks to server
-        uses: burnett01/rsync-deployments@v7
+        uses: burnett01/rsync-deployments@v8
         with:
           switches: -avz --delete --exclude='.env'
           path: stacks/
