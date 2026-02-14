@@ -1,0 +1,140 @@
+name: CI — stack lifecycle e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  STACKS_DIR: /opt/stacks
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create stacks directory
+        run: sudo mkdir -p $STACKS_DIR
+
+      - name: Create traefik_network
+        run: docker network create traefik_network
+
+      # --- Deploy traefik ---
+      - name: Copy traefik stack
+        run: sudo cp -r stacks/traefik $STACKS_DIR/traefik
+
+      - name: Deploy traefik
+        run: docker compose -f $STACKS_DIR/traefik/docker-compose.yml up -d
+
+      - name: Verify traefik is running
+        run: |
+          sleep 3
+          docker ps --filter name=traefik --format '{{.Status}}' | grep -q 'Up'
+          echo "traefik is up"
+
+      # --- Deploy whoami to test dynamic routing ---
+      - name: Create whoami stack
+        run: |
+          sudo mkdir -p $STACKS_DIR/whoami
+          cat <<'COMPOSE' | sudo tee $STACKS_DIR/whoami/docker-compose.yml
+          services:
+            whoami:
+              image: traefik/whoami
+              container_name: whoami
+              labels:
+                - traefik.enable=true
+                - "traefik.http.routers.whoami.rule=Host(`test.miuops.local`)"
+                - traefik.http.routers.whoami.entrypoints=websecure
+                - traefik.http.routers.whoami.tls=true
+              networks:
+                - traefik_network
+          networks:
+            traefik_network:
+              external: true
+          COMPOSE
+
+      - name: Deploy whoami
+        run: docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
+
+      - name: Verify dynamic routing
+        run: |
+          sleep 3
+          status=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test.miuops.local')
+          echo "HTTP status: $status"
+          [ "$status" = "200" ]
+
+      # --- Test teardown: remove whoami, run teardown logic ---
+      - name: Remove whoami stack directory
+        run: sudo rm -rf $STACKS_DIR/whoami
+
+      - name: Run teardown logic
+        run: |
+          removed=$(docker compose ls --format json | python3 -c "
+          import json, sys, os
+          try:
+              stacks_dir = os.environ['STACKS_DIR']
+              stacks = {d for d in os.listdir(stacks_dir) if os.path.isdir(os.path.join(stacks_dir, d))}
+              projects = json.load(sys.stdin)
+              for p in projects:
+                  config = p.get('ConfigFiles', '')
+                  if not config.startswith(stacks_dir + '/'):
+                      continue
+                  name = p['Name']
+                  if name not in stacks:
+                      print(name)
+          except Exception as e:
+              print(str(e), file=sys.stderr)
+              sys.exit(1)
+          ")
+
+          if [ -n "$removed" ]; then
+            while read -r name; do
+              echo "==> Tearing down removed stack: $name"
+              docker compose -p "$name" down --remove-orphans
+            done <<< "$removed"
+          fi
+
+      - name: Verify whoami container is gone
+        run: |
+          if docker ps -a --filter name=whoami --format '{{.Names}}' | grep -q whoami; then
+            echo "FAIL: whoami container still exists"
+            exit 1
+          fi
+          echo "whoami container removed"
+
+      - name: Verify traefik is still running
+        run: |
+          docker ps --filter name=traefik --format '{{.Status}}' | grep -q 'Up'
+          echo "traefik still running — teardown scoping correct"
+
+      # --- Deploy backup stack ---
+      - name: Create dummy .env for backup
+        run: |
+          cat <<'ENV' | sudo tee $STACKS_DIR/.env
+          BACKUP_S3_BUCKET=test-bucket
+          AWS_ACCESS_KEY_ID=test-key
+          AWS_SECRET_ACCESS_KEY=test-secret
+          ENV
+          sudo chmod 600 $STACKS_DIR/.env
+
+      - name: Copy backup stack
+        run: sudo cp -r stacks/backup $STACKS_DIR/backup
+
+      - name: Deploy backup stack
+        run: docker compose -f $STACKS_DIR/backup/docker-compose.yml --env-file $STACKS_DIR/.env up -d
+
+      - name: Verify backup sidecar started
+        run: |
+          sleep 3
+          docker ps --filter name=backup --format '{{.Status}}' | grep -q 'Up'
+          echo "backup sidecar is up"
+
+      # --- Cleanup ---
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f $STACKS_DIR/traefik/docker-compose.yml down 2>/dev/null || true
+          docker compose -f $STACKS_DIR/backup/docker-compose.yml down 2>/dev/null || true
+          docker compose -f $STACKS_DIR/whoami/docker-compose.yml down 2>/dev/null || true
+          docker network rm traefik_network 2>/dev/null || true

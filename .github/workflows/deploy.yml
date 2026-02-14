@@ -64,15 +64,35 @@ jobs:
 
             # Tear down removed stacks
             # docker compose ls shows running projects; compare against stack dirs
-            docker compose ls --format json | python3 -c "
+            STACKS_DIR="/opt/stacks"
+            teardown_failed=0
+
+            removed=$(docker compose ls --format json | python3 -c "
             import json, sys, os
-            stacks = {d for d in os.listdir('/opt/stacks') if os.path.isdir(os.path.join('/opt/stacks', d))}
-            projects = json.load(sys.stdin)
-            for p in projects:
-                name = p['Name']
-                if name not in stacks:
-                    print(name)
-            " | while read -r removed; do
-              echo "==> Tearing down removed stack: $removed"
-              docker compose -p "$removed" down --remove-orphans
-            done
+            try:
+                stacks_dir = '$STACKS_DIR'
+                stacks = {d for d in os.listdir(stacks_dir) if os.path.isdir(os.path.join(stacks_dir, d))}
+                projects = json.load(sys.stdin)
+                for p in projects:
+                    config = p.get('ConfigFiles', '')
+                    if not config.startswith(stacks_dir + '/'):
+                        continue
+                    name = p['Name']
+                    if name not in stacks:
+                        print(name)
+            except Exception as e:
+                print(str(e), file=sys.stderr)
+                sys.exit(1)
+            ") || { echo "::error::Failed to determine removed stacks"; teardown_failed=1; }
+
+            if [ "$teardown_failed" = "0" ] && [ -n "$removed" ]; then
+              while read -r name; do
+                echo "==> Tearing down removed stack: $name"
+                docker compose -p "$name" down --remove-orphans || { echo "::error::Failed to tear down $name"; teardown_failed=1; }
+              done <<< "$removed"
+            fi
+
+            if [ "$teardown_failed" = "1" ]; then
+              echo "::error::One or more teardown operations failed"
+              exit 1
+            fi
