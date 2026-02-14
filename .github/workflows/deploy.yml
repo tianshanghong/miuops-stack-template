@@ -9,6 +9,7 @@ env:
 
 jobs:
   deploy:
+    if: ${{ secrets.SSH_HOST != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
