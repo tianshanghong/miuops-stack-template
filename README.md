@@ -151,7 +151,11 @@ services:
 0 3 * * * cd /opt/stacks/myapp && docker compose exec -T -u postgres db walg-backup.sh
 ```
 
-**Retention**: Object Lock (Compliance mode, 30 days) prevents any deletion. S3 lifecycle transitions to Glacier after 30 days and expires after 90 days. No manual deletion is needed or possible.
+#### Encrypting Backups
+
+Client-side encryption is **strongly recommended** since backups include your `.env` file (which contains secrets). The backup sidecar supports GPG and Age encryption — set one of the encryption variables in your `.env` to enable it. See the [Backup Encryption Guide](https://github.com/tianshanghong/miuops/blob/main/docs/BACKUP_ENCRYPTION.md) for setup instructions and method comparison.
+
+**Retention**: Object Lock (Governance mode, 30 days) prevents deletion without explicit override. S3 lifecycle transitions to Glacier after 30 days and expires after 90 days.
 
 ## Included Stacks
 
