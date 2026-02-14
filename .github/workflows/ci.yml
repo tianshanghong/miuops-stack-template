@@ -116,7 +116,6 @@ jobs:
           AWS_ACCESS_KEY_ID=test-key
           AWS_SECRET_ACCESS_KEY=test-secret
           ENV
-          sudo chmod 600 $STACKS_DIR/.env
 
       - name: Copy backup stack
         run: sudo cp -r stacks/backup $STACKS_DIR/backup
