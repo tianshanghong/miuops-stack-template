@@ -61,3 +61,18 @@ jobs:
               echo "==> Deploying $stack"
               docker compose -f "$stack/docker-compose.yml" --env-file .env up -d --remove-orphans
             done
+
+            # Tear down removed stacks
+            # docker compose ls shows running projects; compare against stack dirs
+            docker compose ls --format json | python3 -c "
+            import json, sys, os
+            stacks = {d for d in os.listdir('/opt/stacks') if os.path.isdir(os.path.join('/opt/stacks', d))}
+            projects = json.load(sys.stdin)
+            for p in projects:
+                name = p['Name']
+                if name not in stacks:
+                    print(name)
+            " | while read -r removed; do
+              echo "==> Tearing down removed stack: $removed"
+              docker compose -p "$removed" down --remove-orphans
+            done
