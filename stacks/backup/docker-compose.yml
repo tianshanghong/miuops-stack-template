@@ -11,8 +11,19 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_ENDPOINT: ${BACKUP_AWS_ENDPOINT:-}
       AWS_S3_PATH: ${BACKUP_S3_PATH:-vol}
+      # Backup encryption (mutually exclusive — only one may be set).
+      # Strongly recommended: backups include .env (secrets).
+      # See docs/BACKUP_ENCRYPTION.md for details.
+      GPG_PASSPHRASE: ${GPG_PASSPHRASE:-}
+      AGE_PASSPHRASE: ${AGE_PASSPHRASE:-}
+      AGE_PUBLIC_KEYS: ${AGE_PUBLIC_KEYS:-}
+      # GPG asymmetric — uncomment below AND the matching volume mount:
+      # GPG_PUBLIC_KEY_RING_FILE: /keys/public_key.asc
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/stacks/.env:/backup/dotenv/.env:ro
+      # GPG asymmetric key file (uncomment with GPG_PUBLIC_KEY_RING_FILE above):
+      # - /opt/stacks/gpg-public-key.asc:/keys/public_key.asc:ro
       # Mount volumes you want to back up under /backup/:
       #   - my_data:/backup/my_data:ro
       # See README for the full pattern.
