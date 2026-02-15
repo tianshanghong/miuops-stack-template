@@ -14,7 +14,11 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 
 1. Click **"Use this template"** to create your private stack repo
 2. Set up GitHub Actions secrets (see below)
-3. Copy `.env.example`, fill in real values, paste into the `ENV_FILE` secret
+3. Copy `.env.example` to `.env`, fill in real values, and upload to the server:
+   ```bash
+   scp .env root@your-server:/opt/stacks/.env
+   ssh root@your-server chmod 600 /opt/stacks/.env
+   ```
 4. Push to `main` — GitHub Actions deploys everything
 
 ## GitHub Actions Secrets
@@ -25,20 +29,18 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 | `SSH_USER` | Yes | SSH username |
 | `SSH_PRIVATE_KEY` | Yes | SSH private key (full PEM) |
 | `SSH_PORT` | No | SSH port (default: 22) |
-| `ENV_FILE` | Yes | Contents of your `.env` file |
 
 ## Deploy Flow
 
 On every push to `main`:
 
-1. **Write `.env`** — Writes `ENV_FILE` secret to `/opt/stacks/.env` (chmod 600)
-2. **Rsync** — Syncs `stacks/` to `/opt/stacks/` (deletes removed stacks, preserves `.env`)
-3. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest)
+1. **Rsync** — Syncs `stacks/` to `/opt/stacks/` (deletes removed stacks, preserves `.env`)
+2. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest)
 
 ## Adding a New Service
 
 1. Create `stacks/<name>/docker-compose.yml`
-2. Add any new env vars to `.env.example` and your `ENV_FILE` secret
+2. Add any new env vars to `.env.example` and update `/opt/stacks/.env` on the server
 3. Push to `main`
 
 ### Network Model
