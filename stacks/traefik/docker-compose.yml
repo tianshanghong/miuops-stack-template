@@ -8,8 +8,6 @@ services:
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - traefik_network
     command:
       # Entrypoints
       - --entrypoints.web.address=:80
@@ -20,13 +18,8 @@ services:
       # Docker provider
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=traefik_network
       # Dashboard
       - --api.dashboard=false
       # Access logs (4xx and 5xx only)
       - --accesslog=true
       - --accesslog.filters.statusCodes=400-599
-
-networks:
-  traefik_network:
-    external: true

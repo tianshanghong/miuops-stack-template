@@ -17,9 +17,6 @@ jobs:
       - name: Create stacks directory
         run: sudo mkdir -p $STACKS_DIR
 
-      - name: Create traefik_network
-        run: docker network create traefik_network
-
       # --- Deploy traefik ---
       - name: Copy traefik stack
         run: sudo cp -r stacks/traefik $STACKS_DIR/traefik
@@ -48,14 +45,15 @@ jobs:
                 - traefik.http.routers.whoami.entrypoints=websecure
                 - traefik.http.routers.whoami.tls=true
               networks:
-                - traefik_network
+                - ingress
           networks:
-            traefik_network:
-              external: true
+            ingress: {}
           COMPOSE
 
       - name: Deploy whoami
-        run: docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
+        run: |
+          docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
+          docker network connect whoami_ingress traefik
 
       - name: Verify dynamic routing
         run: |
@@ -213,4 +211,3 @@ jobs:
           docker compose -f $STACKS_DIR/backup/docker-compose.yml \
             -f $STACKS_DIR/backup/ci-override.yml down 2>/dev/null || true
           docker compose -f $STACKS_DIR/whoami/docker-compose.yml down 2>/dev/null || true
-          docker network rm traefik_network 2>/dev/null || true

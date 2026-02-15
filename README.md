@@ -6,7 +6,7 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 
 ## Prerequisites
 
-- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuops) (Docker, Traefik network, cloudflared, firewall)
+- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuops) (Docker, cloudflared, firewall)
 - SSH access to the server (key-based)
 - GitHub repo created from this template
 
@@ -35,7 +35,7 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 On every push to `main`:
 
 1. **Rsync** — Syncs `stacks/` to `/opt/stacks/` (deletes removed stacks, preserves `.env`)
-2. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest)
+2. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest). After each stack, connects Traefik to the stack's per-stack ingress network.
 
 ## Staying Up to Date
 
@@ -51,7 +51,7 @@ When new changes are available, it opens a PR for you to review and merge. Workf
 
 ### Network Model
 
-Every service must declare explicit `networks:`. Only Traefik binds host ports.
+Every service must declare explicit `networks:`. Only Traefik binds host ports. Each stack gets its own isolated ingress network — stacks cannot reach each other.
 
 **Web service** (receives traffic via Traefik):
 
@@ -65,7 +65,7 @@ services:
       - traefik.http.routers.myapp.entrypoints=websecure
       - traefik.http.services.myapp.loadbalancer.server.port=8080
     networks:
-      - traefik_network
+      - ingress
       - internal
   db:
     image: postgres:17
@@ -78,16 +78,16 @@ volumes:
   db_data:
 
 networks:
-  traefik_network:
-    external: true
+  ingress: {}                # per-stack, auto-prefixed to <stack>_ingress
   internal:
-    internal: true  # no outbound internet access
+    internal: true           # no outbound internet access
 ```
 
 **Key rules:**
-- `traefik_network` (external) — join this to receive traffic from Traefik
-- `internal: true` networks block outbound internet (use for databases)
-- Use a plain `bridge` network (like `egress`) when a container needs outbound internet access
+- `ingress` — per-stack network for receiving traffic from Traefik. The deploy workflow connects Traefik to each stack's ingress network automatically. Stacks are isolated from each other.
+- `internal: true` — blocks outbound internet (use for databases, caches)
+- `egress` — plain bridge network for containers needing outbound internet access
+- No `ports:` except Traefik — all other ingress goes through Traefik labels
 
 ### Backing Up Volumes
 
