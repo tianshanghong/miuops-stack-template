@@ -17,9 +17,6 @@ jobs:
       - name: Create stacks directory
         run: sudo mkdir -p $STACKS_DIR
 
-      - name: Create traefik_network
-        run: docker network create traefik_network
-
       # --- Deploy traefik ---
       - name: Copy traefik stack
         run: sudo cp -r stacks/traefik $STACKS_DIR/traefik
@@ -48,14 +45,15 @@ jobs:
                 - traefik.http.routers.whoami.entrypoints=websecure
                 - traefik.http.routers.whoami.tls=true
               networks:
-                - traefik_network
+                - ingress
           networks:
-            traefik_network:
-              external: true
+            ingress: {}
           COMPOSE
 
       - name: Deploy whoami
-        run: docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
+        run: |
+          docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
+          docker network connect whoami_ingress traefik
 
       - name: Verify dynamic routing
         run: |
@@ -63,6 +61,60 @@ jobs:
           status=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test.miuops.local')
           echo "HTTP status: $status"
           [ "$status" = "200" ]
+
+      # --- Test lateral movement isolation between stacks ---
+      - name: Create whoami2 stack
+        run: |
+          sudo mkdir -p $STACKS_DIR/whoami2
+          cat <<'COMPOSE' | sudo tee $STACKS_DIR/whoami2/docker-compose.yml
+          services:
+            whoami2:
+              image: traefik/whoami
+              container_name: whoami2
+              labels:
+                - traefik.enable=true
+                - "traefik.http.routers.whoami2.rule=Host(`test2.miuops.local`)"
+                - traefik.http.routers.whoami2.entrypoints=websecure
+                - traefik.http.routers.whoami2.tls=true
+              networks:
+                - ingress
+          networks:
+            ingress: {}
+          COMPOSE
+
+      - name: Deploy whoami2
+        run: |
+          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml up -d
+          docker network connect whoami2_ingress traefik
+
+      - name: Verify Traefik routes to both stacks
+        run: |
+          sleep 3
+          s1=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test.miuops.local')
+          s2=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test2.miuops.local')
+          echo "whoami: $s1, whoami2: $s2"
+          [ "$s1" = "200" ] && [ "$s2" = "200" ]
+
+      - name: Verify lateral movement is blocked
+        run: |
+          # whoami should NOT be able to reach whoami2 (different ingress networks)
+          if docker exec whoami wget -q -O- --timeout=3 http://whoami2:80 2>/dev/null; then
+            echo "FAIL: whoami can reach whoami2 — lateral movement NOT blocked"
+            exit 1
+          fi
+          echo "whoami cannot reach whoami2 — lateral movement blocked"
+
+          # whoami2 should NOT be able to reach whoami
+          if docker exec whoami2 wget -q -O- --timeout=3 http://whoami:80 2>/dev/null; then
+            echo "FAIL: whoami2 can reach whoami — lateral movement NOT blocked"
+            exit 1
+          fi
+          echo "whoami2 cannot reach whoami — lateral movement blocked"
+
+      - name: Tear down whoami2
+        run: |
+          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml down --remove-orphans
+          sudo rm -rf $STACKS_DIR/whoami2
 
       # --- Test teardown: remove whoami, run teardown logic ---
       - name: Remove whoami stack directory
@@ -213,4 +265,4 @@ jobs:
           docker compose -f $STACKS_DIR/backup/docker-compose.yml \
             -f $STACKS_DIR/backup/ci-override.yml down 2>/dev/null || true
           docker compose -f $STACKS_DIR/whoami/docker-compose.yml down 2>/dev/null || true
-          docker network rm traefik_network 2>/dev/null || true
+          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml down 2>/dev/null || true
