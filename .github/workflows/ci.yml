@@ -129,11 +129,88 @@ jobs:
           docker ps --filter name=backup --format '{{.Status}}' | grep -q 'Up'
           echo "backup sidecar is up"
 
+      - name: Verify .env mount inside backup container
+        run: |
+          docker exec backup test -f /backup/dotenv/.env
+          echo ".env mount verified"
+
+      - name: Test backup produces tarball with .env
+        run: |
+          docker compose -f $STACKS_DIR/backup/docker-compose.yml --env-file $STACKS_DIR/.env down
+
+          sudo mkdir -p $STACKS_DIR/backup-archive
+
+          cat <<'YAML' | sudo tee $STACKS_DIR/backup/ci-override.yml
+          services:
+            backup:
+              environment:
+                AWS_S3_BUCKET_NAME: ""
+                BACKUP_ARCHIVE: /archive
+              volumes:
+                - /opt/stacks/backup-archive:/archive
+          YAML
+
+          echo "BACKUP_S3_BUCKET=" | sudo tee -a $STACKS_DIR/.env > /dev/null
+
+          docker compose \
+            -f $STACKS_DIR/backup/docker-compose.yml \
+            -f $STACKS_DIR/backup/ci-override.yml \
+            --env-file $STACKS_DIR/.env up -d
+          sleep 3
+
+          docker exec backup backup
+
+          tarball=$(find $STACKS_DIR/backup-archive -name '*.tar.gz' | head -1)
+          if [ -z "$tarball" ]; then
+            echo "FAIL: no backup tarball produced"
+            ls -la $STACKS_DIR/backup-archive/
+            exit 1
+          fi
+          echo "Tarball: $tarball"
+          tar tzf "$tarball" | grep -q 'dotenv/.env'
+          echo "dotenv/.env found in backup tarball"
+
+      - name: Test GPG encryption round-trip
+        run: |
+          docker compose -f $STACKS_DIR/backup/docker-compose.yml \
+            -f $STACKS_DIR/backup/ci-override.yml --env-file $STACKS_DIR/.env down
+
+          sudo rm -f $STACKS_DIR/backup-archive/*
+
+          echo "GPG_PASSPHRASE=ci-test-passphrase-do-not-use" | sudo tee -a $STACKS_DIR/.env > /dev/null
+
+          docker compose \
+            -f $STACKS_DIR/backup/docker-compose.yml \
+            -f $STACKS_DIR/backup/ci-override.yml \
+            --env-file $STACKS_DIR/.env up -d
+          sleep 3
+
+          docker exec backup backup
+
+          encrypted=$(find $STACKS_DIR/backup-archive -name '*.gpg' | head -1)
+          if [ -z "$encrypted" ]; then
+            echo "FAIL: no .gpg file produced"
+            ls -la $STACKS_DIR/backup-archive/
+            exit 1
+          fi
+          echo "Encrypted backup: $encrypted"
+
+          decrypted="${encrypted%.gpg}"
+          if ! gpg --decrypt --batch --passphrase "ci-test-passphrase-do-not-use" \
+            "$encrypted" > "$decrypted"; then
+            echo "FAIL: GPG decryption failed"
+            exit 1
+          fi
+
+          tar tzf "$decrypted" | grep -q 'dotenv/.env'
+          echo "GPG encryption round-trip verified"
+
       # --- Cleanup ---
       - name: Cleanup
         if: always()
         run: |
           docker compose -f $STACKS_DIR/traefik/docker-compose.yml down 2>/dev/null || true
-          docker compose -f $STACKS_DIR/backup/docker-compose.yml down 2>/dev/null || true
+          docker compose -f $STACKS_DIR/backup/docker-compose.yml \
+            -f $STACKS_DIR/backup/ci-override.yml down 2>/dev/null || true
           docker compose -f $STACKS_DIR/whoami/docker-compose.yml down 2>/dev/null || true
           docker network rm traefik_network 2>/dev/null || true
