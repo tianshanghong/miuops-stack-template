@@ -1,0 +1,121 @@
+name: Sync template
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  TEMPLATE_REPO: https://github.com/tianshanghong/miuops-stack-template.git
+  SYNC_BRANCH: chore/sync-template
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for existing sync PR
+        id: check-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "pr_exists=true" >> "$GITHUB_OUTPUT"
+            echo "pr_number=$existing" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch template
+        run: |
+          git remote add template "$TEMPLATE_REPO"
+          git remote set-url --push template https://localhost/NEVER_PUSH
+          git fetch template main
+
+      - name: Check for new changes
+        id: diff-check
+        run: |
+          if git rev-parse --verify "origin/$SYNC_BRANCH" >/dev/null 2>&1; then
+            base_ref="origin/$SYNC_BRANCH"
+          else
+            base_ref="HEAD"
+          fi
+
+          if git diff --quiet "$base_ref" "template/main" --; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No new changes from template"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Attempt merge
+        if: steps.diff-check.outputs.has_changes == 'true'
+        id: merge
+        run: |
+          git checkout -B "$SYNC_BRANCH"
+
+          if git merge template/main \
+               --allow-unrelated-histories \
+               -m "chore: merge upstream template changes"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git add -A
+            git commit -m "chore: merge upstream template (conflicts need resolution)"
+          fi
+
+      - name: Push sync branch
+        if: steps.diff-check.outputs.has_changes == 'true'
+        run: git push origin "$SYNC_BRANCH" --force-with-lease
+
+      - name: Create or update PR
+        if: steps.diff-check.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.merge.outputs.conflict }}" = "true" ]; then
+            body=$(cat <<'EOF'
+          ## Sync from upstream template
+
+          > **Merge conflicts detected.** Conflict markers are present in the changed files.
+
+          To resolve:
+          1. Check out this branch locally: `gh pr checkout <number>`
+          2. Search for conflict markers (`<<<<<<<`) and resolve them
+          3. Commit and push
+
+          **Source:** [`miuops-stack-template`](https://github.com/tianshanghong/miuops-stack-template)
+          EOF
+          )
+          else
+            body=$(cat <<'EOF'
+          ## Sync from upstream template
+
+          This PR merges the latest changes from the upstream template.
+          Review the changes before merging.
+
+          **Source:** [`miuops-stack-template`](https://github.com/tianshanghong/miuops-stack-template)
+          EOF
+          )
+          fi
+
+          if [ "${{ steps.check-pr.outputs.pr_exists }}" = "true" ]; then
+            gh pr edit "${{ steps.check-pr.outputs.pr_number }}" --body "$body"
+          else
+            gh pr create \
+              --head "$SYNC_BRANCH" \
+              --base main \
+              --title "chore: sync upstream template" \
+              --body "$body"
+          fi
