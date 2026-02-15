@@ -43,15 +43,11 @@ jobs:
       - name: Check for new changes
         id: diff-check
         run: |
-          if git rev-parse --verify "origin/$SYNC_BRANCH" >/dev/null 2>&1; then
-            base_ref="origin/$SYNC_BRANCH"
-          else
-            base_ref="HEAD"
-          fi
-
-          if git diff --quiet "$base_ref" "template/main" -- ':!.github/workflows/'; then
+          # After a previous sync PR is merged, template/main is an ancestor of HEAD.
+          # merge-base --is-ancestor checks if template/main has moved past that point.
+          if git merge-base --is-ancestor template/main HEAD; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No new changes from template (excluding workflow files)"
+            echo "::notice::No new changes from template"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
@@ -66,6 +62,7 @@ jobs:
         id: merge
         run: |
           git checkout -B "$SYNC_BRANCH"
+          pre_merge=$(git rev-parse HEAD)
 
           if git merge template/main \
                --allow-unrelated-histories \
@@ -78,8 +75,8 @@ jobs:
           fi
 
           # Revert workflow file changes — GITHUB_TOKEN cannot push these
-          if git diff HEAD~1 --name-only -- .github/workflows/ | grep -q .; then
-            git checkout HEAD~1 -- .github/workflows/
+          if git diff "$pre_merge" --name-only -- .github/workflows/ | grep -q .; then
+            git checkout "$pre_merge" -- .github/workflows/
             git commit --amend --no-edit
           fi
 
