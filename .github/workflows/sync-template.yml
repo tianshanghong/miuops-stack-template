@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  workflows: write
 
 env:
   TEMPLATE_REPO: https://github.com/tianshanghong/miuops-stack-template.git
@@ -50,9 +49,9 @@ jobs:
             base_ref="HEAD"
           fi
 
-          if git diff --quiet "$base_ref" "template/main" --; then
+          if git diff --quiet "$base_ref" "template/main" -- ':!.github/workflows/'; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No new changes from template"
+            echo "::notice::No new changes from template (excluding workflow files)"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
@@ -76,6 +75,12 @@ jobs:
             echo "conflict=true" >> "$GITHUB_OUTPUT"
             git add -A
             git commit -m "chore: merge upstream template (conflicts need resolution)"
+          fi
+
+          # Revert workflow file changes — GITHUB_TOKEN cannot push these
+          if git diff HEAD~1 --name-only -- .github/workflows/ | grep -q .; then
+            git checkout HEAD~1 -- .github/workflows/
+            git commit --amend --no-edit
           fi
 
       - name: Push sync branch
