@@ -14,21 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Write .env file
-        uses: appleboy/ssh-action@v1
-        env:
-          ENV_CONTENT: ${{ secrets.ENV_FILE }}
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          envs: ENV_CONTENT
-          script: |
-            set -e
-            printf '%s\n' "$ENV_CONTENT" > /opt/stacks/.env
-            chmod 600 /opt/stacks/.env
-
       - name: Rsync stacks to server
         uses: burnett01/rsync-deployments@v8
         with:
