@@ -14,11 +14,11 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 
 1. Click **"Use this template"** to create your private stack repo
 2. Set up GitHub Actions secrets (see below)
-3. Copy `.env.example` to `.env`, fill in real values, and upload to the server:
+3. SSH into the server and fill in `/opt/stacks/.env` (pre-created by miuOps with secure permissions):
    ```bash
-   scp .env root@your-server:/opt/stacks/.env
-   ssh root@your-server chmod 600 /opt/stacks/.env
+   ssh root@your-server nano /opt/stacks/.env
    ```
+   Copy variables from `.env.example` and fill in real values.
 4. Push to `main` — GitHub Actions deploys everything
 
 ## GitHub Actions Secrets
@@ -36,6 +36,12 @@ On every push to `main`:
 
 1. **Rsync** — Syncs `stacks/` to `/opt/stacks/` (deletes removed stacks, preserves `.env`)
 2. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest)
+
+## Staying Up to Date
+
+This repo includes a sync workflow that pulls changes from the upstream [miuops-stack-template](https://github.com/tianshanghong/miuops-stack-template). It runs weekly (Mondays) or on demand from the **Actions** tab > **Sync template**.
+
+When new changes are available, it opens a PR for you to review and merge. Workflow files (`.github/workflows/`) cannot be synced automatically due to GitHub token limitations — if upstream workflows change, the PR body will list them so you can update manually.
 
 ## Adding a New Service
 

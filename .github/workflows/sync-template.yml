@@ -74,8 +74,19 @@ jobs:
             git commit -m "chore: merge upstream template (conflicts need resolution)"
           fi
 
+          # Detect workflow file changes before reverting (diff would be empty after)
+          changed_workflows=$(git diff "$pre_merge" --name-only -- .github/workflows/)
+          if [ -n "$changed_workflows" ]; then
+            echo "has_workflow_changes=true" >> "$GITHUB_OUTPUT"
+            {
+              echo 'workflow_files<<GHEOF'
+              echo "$changed_workflows"
+              echo 'GHEOF'
+            } >> "$GITHUB_OUTPUT"
+          fi
+
           # Revert workflow file changes — GITHUB_TOKEN cannot push these
-          if git diff "$pre_merge" --name-only -- .github/workflows/ | grep -q .; then
+          if [ -n "$changed_workflows" ]; then
             git checkout "$pre_merge" -- .github/workflows/
             git commit --amend --no-edit
           fi
@@ -113,6 +124,20 @@ jobs:
           **Source:** [`miuops-stack-template`](https://github.com/tianshanghong/miuops-stack-template)
           EOF
           )
+          fi
+
+          if [ "${{ steps.merge.outputs.has_workflow_changes }}" = "true" ]; then
+            workflow_list=""
+            while IFS= read -r f; do
+              workflow_list="${workflow_list}          > - \`${f}\`"$'\n'
+            done <<< "${{ steps.merge.outputs.workflow_files }}"
+            workflow_list="${workflow_list%$'\n'}"
+            body="${body}"$'\n\n'"$(cat <<EOF
+          > **Workflow updates available.** The following workflow files were updated upstream but cannot be synced automatically:
+          ${workflow_list}
+          > Compare manually: [\`template workflows\`](https://github.com/tianshanghong/miuops-stack-template/tree/main/.github/workflows)
+          EOF
+          )"
           fi
 
           if [ "${{ steps.check-pr.outputs.pr_exists }}" = "true" ]; then

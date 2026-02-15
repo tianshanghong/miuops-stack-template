@@ -4,17 +4,25 @@ on:
   push:
     branches: [main]
 
-env:
-  SSH_PORT: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
-
 jobs:
   deploy:
-    if: ${{ secrets.SSH_HOST != '' }}
     runs-on: ubuntu-latest
+    env:
+      SSH_PORT: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
     steps:
+      - name: Check if deploy secrets are configured
+        id: check
+        run: |
+          if [ -z "${{ secrets.SSH_HOST }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping deploy — SSH_HOST secret not configured"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
 
       - name: Rsync stacks to server
+        if: steps.check.outputs.skip != 'true'
         uses: burnett01/rsync-deployments@v8
         with:
           switches: -avz --delete --exclude='.env'
@@ -26,6 +34,7 @@ jobs:
           remote_port: ${{ env.SSH_PORT }}
 
       - name: Deploy stacks
+        if: steps.check.outputs.skip != 'true'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
