@@ -2,10 +2,13 @@ name: Sync template
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 09:00 UTC
 
 permissions:
   contents: write
   pull-requests: write
+  workflows: write
 
 env:
   TEMPLATE_REPO: https://github.com/tianshanghong/miuops-stack-template.git
