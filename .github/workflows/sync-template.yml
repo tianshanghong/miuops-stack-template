@@ -129,7 +129,7 @@ jobs:
           if [ "${{ steps.merge.outputs.has_workflow_changes }}" = "true" ]; then
             workflow_list=""
             while IFS= read -r f; do
-              workflow_list="${workflow_list}          > - \`${f}\`"$'\n'
+              workflow_list="${workflow_list}> - \`${f}\`"$'\n'
             done <<< "${{ steps.merge.outputs.workflow_files }}"
             workflow_list="${workflow_list%$'\n'}"
             body="${body}"$'\n\n'"$(cat <<EOF
