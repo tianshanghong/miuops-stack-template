@@ -121,7 +121,9 @@ services:
 
 ### PostgreSQL + WAL-G Continuous Archiving
 
-For PostgreSQL databases, use the `postgres-walg` image (built from `images/postgres-walg/` in the metal repo) for continuous WAL archiving to S3. This runs alongside the volume backup stack — both write to the same S3 bucket under different prefixes:
+For PostgreSQL databases, use the pre-built [`postgres-walg`](https://github.com/tianshanghong/miuops/tree/main/images/postgres-walg) image for continuous WAL archiving to S3. It adds [WAL-G](https://github.com/wal-g/wal-g) to the official `postgres:17` image with archive mode pre-configured. WAL-G also supports MySQL, MariaDB, MongoDB, and other databases — see the [WAL-G docs](https://github.com/wal-g/wal-g#databases) to build a similar image for other engines.
+
+This runs alongside the volume backup stack — both write to the same S3 bucket under different prefixes:
 
 ```
 myproject-backup/          # One bucket per project
@@ -138,7 +140,7 @@ Example compose file using the `postgres-walg` image:
 ```yaml
 services:
   db:
-    image: ghcr.io/yourorg/postgres-walg:17
+    image: ghcr.io/tianshanghong/postgres-walg:17
     environment:
       POSTGRES_DB: myapp
       POSTGRES_USER: myapp
