@@ -1,6 +1,6 @@
 services:
   backup:
-    image: offen/docker-volume-backup:v2
+    image: ghcr.io/tianshanghong/docker-volume-backup:latest
     container_name: backup
     restart: unless-stopped
     environment:
