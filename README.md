@@ -89,6 +89,32 @@ networks:
 - `egress` — plain bridge network for containers needing outbound internet access
 - No `ports:` except Traefik — all other ingress goes through Traefik labels
 
+### Private Registry Authentication
+
+To deploy images from private registries (GHCR, Docker Hub, self-hosted), add credentials to `/opt/stacks/.env` on the server using this pattern:
+
+```bash
+DOCKER_REGISTRY_<NAME>_URL=<registry-url>
+DOCKER_REGISTRY_<NAME>_USER=<username>
+DOCKER_REGISTRY_<NAME>_PASSWORD=<token>
+```
+
+Name each registry whatever you like. The deploy workflow auto-discovers all `DOCKER_REGISTRY_*` entries and logs in before deploying stacks.
+
+**Example** — pulling from GitHub Container Registry:
+
+```bash
+DOCKER_REGISTRY_GHCR_URL=ghcr.io
+DOCKER_REGISTRY_GHCR_USER=your-github-username
+DOCKER_REGISTRY_GHCR_PASSWORD=ghp_xxxxxxxxxxxx
+```
+
+Create tokens with read-only package access:
+- **GHCR**: [Personal Access Token](https://github.com/settings/tokens) with `read:packages` scope
+- **Docker Hub**: [Access Token](https://hub.docker.com/settings/security)
+
+See `.env.example` for more examples.
+
 ### Backing Up Volumes
 
 The `backup` stack uses [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup) to upload tarballs to S3 on a daily schedule. To back up a volume, mount it into the backup container under `/backup/`:

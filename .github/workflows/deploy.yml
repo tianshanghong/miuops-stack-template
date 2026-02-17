@@ -45,6 +45,21 @@ jobs:
             set -e
             cd /opt/stacks
 
+            # ── Registry authentication (optional) ──
+            # Auto-discover registries from .env: DOCKER_REGISTRY_<NAME>_{URL,USER,PASSWORD}
+            get_env() { sed -n "s/^${1}=//p" .env; }
+
+            grep '^DOCKER_REGISTRY_.*_PASSWORD=' .env 2>/dev/null \
+              | sed 's/^DOCKER_REGISTRY_//;s/_PASSWORD=.*//' \
+              | while read -r name; do
+                  url=$(get_env "DOCKER_REGISTRY_${name}_URL")
+                  pass=$(get_env "DOCKER_REGISTRY_${name}_PASSWORD")
+                  if [ -n "$pass" ] && [ -n "$url" ]; then
+                    echo "==> Logging in to $url"
+                    echo "$pass" | docker login "$url" -u "$(get_env "DOCKER_REGISTRY_${name}_USER")" --password-stdin
+                  fi
+                done
+
             # Deploy Traefik first
             echo "==> Deploying traefik"
             docker compose -f traefik/docker-compose.yml --env-file .env up -d --remove-orphans
