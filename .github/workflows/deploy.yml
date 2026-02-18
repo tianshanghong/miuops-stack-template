@@ -3,6 +3,8 @@ name: Deploy stacks
 on:
   push:
     branches: [main]
+  repository_dispatch:
+    types: [deploy]
 
 jobs:
   deploy:
@@ -65,14 +67,14 @@ jobs:
 
             # Deploy Traefik first
             echo "==> Deploying traefik"
-            docker compose -f traefik/docker-compose.yml --env-file .env up -d --remove-orphans
+            docker compose -f traefik/docker-compose.yml --env-file .env up -d --pull always --remove-orphans
 
             # Deploy remaining stacks and connect Traefik to per-stack ingress networks
             for stack in */; do
               stack="${stack%/}"
               [ "$stack" = "traefik" ] && continue
               echo "==> Deploying $stack"
-              docker compose -f "$stack/docker-compose.yml" --env-file .env up -d --remove-orphans
+              docker compose -f "$stack/docker-compose.yml" --env-file .env up -d --pull always --remove-orphans
               # Connect Traefik to the stack's ingress network (idempotent)
               if docker network connect "${stack}_ingress" traefik 2>/dev/null; then
                 echo "    Connected traefik to ${stack}_ingress"
