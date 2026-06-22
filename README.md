@@ -49,6 +49,31 @@ When new changes are available, it opens a PR for you to review and merge. Workf
 2. Add any new env vars to `.env.example` and update `/opt/stacks/.env` on the server
 3. Push to `main`
 
+### Environment Variables
+
+All stacks on a server **share one `/opt/stacks/.env`**, so every variable must be
+**namespaced** — never use a bare/generic name (e.g. `DB_PASSWORD`, `API_KEY`), or two
+projects will silently override each other.
+
+- **Project vars** — prefix with the project handle, then map to the app's expected
+  name in the compose `environment:` block (left = the name the app/SDK reads, right =
+  the namespaced `.env` name):
+
+  ```yaml
+  services:
+    myapp:
+      environment:
+        DB_PASSWORD: ${MYAPP_DB_PASSWORD}
+        ANTHROPIC_API_KEY: ${MYAPP_ANTHROPIC_API_KEY}
+  ```
+
+- **Shared infrastructure** — the backup S3 account (used by the offen volume backup
+  and WAL-G) uses the `BACKUP_` namespace (`BACKUP_AWS_ACCESS_KEY_ID`, …). Reference it
+  from both consumers; don't duplicate it under per-project names.
+
+The app-facing name stays standard (the SDK still sees `ANTHROPIC_API_KEY`) while the
+shared file stays collision-free. See `.env.example`.
+
 ### Network Model
 
 Every service must declare explicit `networks:`. Only Traefik binds host ports. Each stack gets its own isolated ingress network — stacks cannot reach each other.
@@ -170,11 +195,11 @@ services:
     environment:
       POSTGRES_DB: myapp
       POSTGRES_USER: myapp
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      WALG_S3_PREFIX: ${WALG_S3_PREFIX}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_REGION: ${AWS_REGION}
+      POSTGRES_PASSWORD: ${MYAPP_DB_PASSWORD}
+      WALG_S3_PREFIX: ${MYAPP_WALG_S3_PREFIX}
+      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${BACKUP_AWS_REGION}
     volumes:
       - db_data:/var/lib/postgresql/data
     networks:
