@@ -244,3 +244,8 @@ Client-side encryption is **strongly recommended** since backups include your `.
 
 - **traefik** — Reverse proxy. Listens on 80 (redirect) and 443. Cloudflared connects to 443 with `noTLSVerify`.
 - **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup). No volumes are backed up by default — mount the ones you need (see above). For PostgreSQL, use the WAL-G pattern above instead of stop-during-backup.
+
+## License
+
+The template itself is [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)). A
+private stack repo you create from it is yours — relicense or remove this as you like.
