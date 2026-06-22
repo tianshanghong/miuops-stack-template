@@ -124,16 +124,17 @@ metal repo), which creates `<domain>` + `*.<domain>` CNAMEs.
 (`*.example.com`) — so `example.com`, `app.example.com`, and `api.example.com` all get
 HTTPS for free.
 
-It does **not** cover a **second-level** wildcard (`*.dev.example.com`). Nesting hosts
-under a subdomain (e.g. `api.dev.example.com`) needs Cloudflare **Advanced Certificate
+It does **not** cover a **second-level** wildcard (`*.sub.example.com`). Nesting hosts
+another level deep (e.g. `api.sub.example.com`) needs Cloudflare **Advanced Certificate
 Manager** (paid).
 
-**Running a separate environment (dev/staging) on another server, on free certs:** use
-**first-level** subdomains and point each at the right server with its own `add-domain`
-— e.g. `dev.example.com` + `api-dev.example.com` on the dev box, `example.com` +
-`api.example.com` on prod. All are first-level, so Universal SSL covers them. (An exact
-subdomain record overrides the apex's `*.example.com`, so it can live on a different
-server.)
+**Prefer first-level subdomains to stay on free certs.** `app.example.com`,
+`api.example.com`, … are all covered by Universal SSL, and each can point at a
+**different server** via its own `add-domain` (an exact subdomain record overrides the
+apex `*.example.com`). So splitting hosts across servers — **by service, by environment
+(prod/dev), by tenant, or any other reason** — stays on free certs as long as the names
+remain first-level; nesting another level (`*.sub.example.com`) is what triggers the ACM
+requirement.
 
 ### Private Registry Authentication
 
