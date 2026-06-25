@@ -1,268 +1,65 @@
-name: CI — stack lifecycle e2e
+name: CI — stack policy-check + isolation e2e
 
 on:
   push:
     branches: [main]
   pull_request:
 
-env:
-  STACKS_DIR: /opt/stacks
-
 jobs:
-  e2e:
+  policy-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create stacks directory
-        run: sudo mkdir -p $STACKS_DIR
+      - name: Run the miuops stack policy-check
+        # Use the canonical policy-check from miuops as the single source of truth — it gates
+        # public/non-loopback published ports, privileged, host-namespace sharing, the default
+        # bridge (docker0), missing cap_drop:[ALL], dangerous cap_add, sandbox-weakening
+        # security_opt, sensitive bind-mounts, devices, and warns on un-pinned images.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          curl -fsSL -o "$RUNNER_TEMP/stack_policy_check.py" \
+            https://raw.githubusercontent.com/tianshanghong/miuops/main/tests/stack_policy_check.py
+          shopt -s nullglob
+          files=(stacks/*/docker-compose.yml stacks/*/compose.yml stacks/*/compose.yaml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No stacks to check."
+            exit 0
+          fi
+          python3 "$RUNNER_TEMP/stack_policy_check.py" "${files[@]}"
 
-      # --- Deploy traefik ---
-      - name: Copy traefik stack
-        run: sudo cp -r stacks/traefik $STACKS_DIR/traefik
+  lateral-isolation-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Deploy traefik
-        run: docker compose -f $STACKS_DIR/traefik/docker-compose.yml up -d
+      - name: Create two stacks on separate per-stack bridges
+        run: |
+          docker network create alpha_internal
+          docker network create beta_internal
 
-      - name: Verify traefik is running
+          docker run -d --name alpha --network alpha_internal traefik/whoami
+          docker run -d --name beta --network beta_internal traefik/whoami
+
+      - name: Verify lateral movement between stacks is blocked
         run: |
           sleep 3
-          docker ps --filter name=traefik --format '{{.Status}}' | grep -q 'Up'
-          echo "traefik is up"
-
-      # --- Deploy whoami to test dynamic routing ---
-      - name: Create whoami stack
-        run: |
-          sudo mkdir -p $STACKS_DIR/whoami
-          cat <<'COMPOSE' | sudo tee $STACKS_DIR/whoami/docker-compose.yml
-          services:
-            whoami:
-              image: traefik/whoami
-              container_name: whoami
-              labels:
-                - traefik.enable=true
-                - "traefik.http.routers.whoami.rule=Host(`test.miuops.local`)"
-                - traefik.http.routers.whoami.entrypoints=websecure
-                - traefik.http.routers.whoami.tls=true
-              networks:
-                - ingress
-          networks:
-            ingress: {}
-          COMPOSE
-
-      - name: Deploy whoami
-        run: |
-          docker compose -f $STACKS_DIR/whoami/docker-compose.yml up -d
-          docker network connect whoami_ingress traefik
-
-      - name: Verify dynamic routing
-        run: |
-          sleep 3
-          status=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test.miuops.local')
-          echo "HTTP status: $status"
-          [ "$status" = "200" ]
-
-      # --- Test lateral movement isolation between stacks ---
-      - name: Create whoami2 stack
-        run: |
-          sudo mkdir -p $STACKS_DIR/whoami2
-          cat <<'COMPOSE' | sudo tee $STACKS_DIR/whoami2/docker-compose.yml
-          services:
-            whoami2:
-              image: traefik/whoami
-              container_name: whoami2
-              labels:
-                - traefik.enable=true
-                - "traefik.http.routers.whoami2.rule=Host(`test2.miuops.local`)"
-                - traefik.http.routers.whoami2.entrypoints=websecure
-                - traefik.http.routers.whoami2.tls=true
-              networks:
-                - ingress
-          networks:
-            ingress: {}
-          COMPOSE
-
-      - name: Deploy whoami2
-        run: |
-          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml up -d
-          docker network connect whoami2_ingress traefik
-
-      - name: Verify Traefik routes to both stacks
-        run: |
-          sleep 3
-          s1=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test.miuops.local')
-          s2=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1 -H 'Host: test2.miuops.local')
-          echo "whoami: $s1, whoami2: $s2"
-          [ "$s1" = "200" ] && [ "$s2" = "200" ]
-
-      - name: Verify lateral movement is blocked
-        run: |
-          # whoami should NOT be able to reach whoami2 (different ingress networks)
-          if docker exec whoami wget -q -O- --timeout=3 http://whoami2:80 2>/dev/null; then
-            echo "FAIL: whoami can reach whoami2 — lateral movement NOT blocked"
+          # alpha must NOT reach beta — they sit on separate per-stack bridges.
+          if docker exec alpha wget -q -O- --timeout=3 http://beta:80 2>/dev/null; then
+            echo "FAIL: alpha can reach beta — lateral movement NOT blocked"
             exit 1
           fi
-          echo "whoami cannot reach whoami2 — lateral movement blocked"
+          echo "alpha cannot reach beta — lateral movement blocked"
 
-          # whoami2 should NOT be able to reach whoami
-          if docker exec whoami2 wget -q -O- --timeout=3 http://whoami:80 2>/dev/null; then
-            echo "FAIL: whoami2 can reach whoami — lateral movement NOT blocked"
+          # beta must NOT reach alpha either.
+          if docker exec beta wget -q -O- --timeout=3 http://alpha:80 2>/dev/null; then
+            echo "FAIL: beta can reach alpha — lateral movement NOT blocked"
             exit 1
           fi
-          echo "whoami2 cannot reach whoami — lateral movement blocked"
+          echo "beta cannot reach alpha — lateral movement blocked"
 
-      - name: Tear down whoami2
-        run: |
-          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml down --remove-orphans
-          sudo rm -rf $STACKS_DIR/whoami2
-
-      # --- Test teardown: remove whoami, run teardown logic ---
-      - name: Remove whoami stack directory
-        run: sudo rm -rf $STACKS_DIR/whoami
-
-      - name: Run teardown logic
-        run: |
-          removed=$(docker compose ls --format json | python3 -c "
-          import json, sys, os
-          try:
-              stacks_dir = os.environ['STACKS_DIR']
-              stacks = {d for d in os.listdir(stacks_dir) if os.path.isdir(os.path.join(stacks_dir, d))}
-              projects = json.load(sys.stdin)
-              for p in projects:
-                  config = p.get('ConfigFiles', '')
-                  if not config.startswith(stacks_dir + '/'):
-                      continue
-                  name = p['Name']
-                  if name not in stacks:
-                      print(name)
-          except Exception as e:
-              print(str(e), file=sys.stderr)
-              sys.exit(1)
-          ")
-
-          if [ -n "$removed" ]; then
-            while read -r name; do
-              echo "==> Tearing down removed stack: $name"
-              docker compose -p "$name" down --remove-orphans
-            done <<< "$removed"
-          fi
-
-      - name: Verify whoami container is gone
-        run: |
-          if docker ps -a --filter name=whoami --format '{{.Names}}' | grep -q whoami; then
-            echo "FAIL: whoami container still exists"
-            exit 1
-          fi
-          echo "whoami container removed"
-
-      - name: Verify traefik is still running
-        run: |
-          docker ps --filter name=traefik --format '{{.Status}}' | grep -q 'Up'
-          echo "traefik still running — teardown scoping correct"
-
-      # --- Deploy backup stack ---
-      - name: Create dummy .env for backup
-        run: |
-          cat <<'ENV' | sudo tee $STACKS_DIR/.env
-          BACKUP_S3_BUCKET=test-bucket
-          BACKUP_AWS_ACCESS_KEY_ID=test-key
-          BACKUP_AWS_SECRET_ACCESS_KEY=test-secret
-          ENV
-
-      - name: Copy backup stack
-        run: sudo cp -r stacks/backup $STACKS_DIR/backup
-
-      - name: Deploy backup stack
-        run: docker compose -f $STACKS_DIR/backup/docker-compose.yml --env-file $STACKS_DIR/.env up -d
-
-      - name: Verify backup sidecar started
-        run: |
-          sleep 3
-          docker ps --filter name=backup --format '{{.Status}}' | grep -q 'Up'
-          echo "backup sidecar is up"
-
-      - name: Verify .env mount inside backup container
-        run: |
-          docker exec backup test -f /backup/dotenv/.env
-          echo ".env mount verified"
-
-      - name: Test backup produces tarball with .env
-        run: |
-          docker compose -f $STACKS_DIR/backup/docker-compose.yml --env-file $STACKS_DIR/.env down
-
-          sudo mkdir -p $STACKS_DIR/backup-archive
-
-          cat <<'YAML' | sudo tee $STACKS_DIR/backup/ci-override.yml
-          services:
-            backup:
-              environment:
-                AWS_S3_BUCKET_NAME: ""
-                BACKUP_ARCHIVE: /archive
-              volumes:
-                - /opt/stacks/backup-archive:/archive
-          YAML
-
-          echo "BACKUP_S3_BUCKET=" | sudo tee -a $STACKS_DIR/.env > /dev/null
-
-          docker compose \
-            -f $STACKS_DIR/backup/docker-compose.yml \
-            -f $STACKS_DIR/backup/ci-override.yml \
-            --env-file $STACKS_DIR/.env up -d
-          sleep 3
-
-          docker exec backup backup
-
-          tarball=$(find $STACKS_DIR/backup-archive -name '*.tar.gz' | head -1)
-          if [ -z "$tarball" ]; then
-            echo "FAIL: no backup tarball produced"
-            ls -la $STACKS_DIR/backup-archive/
-            exit 1
-          fi
-          echo "Tarball: $tarball"
-          tar tzf "$tarball" | grep -q 'dotenv/.env'
-          echo "dotenv/.env found in backup tarball"
-
-      - name: Test GPG encryption round-trip
-        run: |
-          docker compose -f $STACKS_DIR/backup/docker-compose.yml \
-            -f $STACKS_DIR/backup/ci-override.yml --env-file $STACKS_DIR/.env down
-
-          sudo rm -f $STACKS_DIR/backup-archive/*
-
-          echo "BACKUP_GPG_PASSPHRASE=ci-test-passphrase-do-not-use" | sudo tee -a $STACKS_DIR/.env > /dev/null
-
-          docker compose \
-            -f $STACKS_DIR/backup/docker-compose.yml \
-            -f $STACKS_DIR/backup/ci-override.yml \
-            --env-file $STACKS_DIR/.env up -d
-          sleep 3
-
-          docker exec backup backup
-
-          encrypted=$(find $STACKS_DIR/backup-archive -name '*.gpg' | head -1)
-          if [ -z "$encrypted" ]; then
-            echo "FAIL: no .gpg file produced"
-            ls -la $STACKS_DIR/backup-archive/
-            exit 1
-          fi
-          echo "Encrypted backup: $encrypted"
-
-          decrypted="${encrypted%.gpg}"
-          if ! gpg --decrypt --batch --passphrase "ci-test-passphrase-do-not-use" \
-            "$encrypted" > "$decrypted"; then
-            echo "FAIL: GPG decryption failed"
-            exit 1
-          fi
-
-          tar tzf "$decrypted" | grep -q 'dotenv/.env'
-          echo "GPG encryption round-trip verified"
-
-      # --- Cleanup ---
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f $STACKS_DIR/traefik/docker-compose.yml down 2>/dev/null || true
-          docker compose -f $STACKS_DIR/backup/docker-compose.yml \
-            -f $STACKS_DIR/backup/ci-override.yml down 2>/dev/null || true
-          docker compose -f $STACKS_DIR/whoami/docker-compose.yml down 2>/dev/null || true
-          docker compose -f $STACKS_DIR/whoami2/docker-compose.yml down 2>/dev/null || true
+          docker rm -f alpha beta 2>/dev/null || true
+          docker network rm alpha_internal beta_internal 2>/dev/null || true

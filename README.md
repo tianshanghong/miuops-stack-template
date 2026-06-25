@@ -2,11 +2,11 @@
 
 Your private GitOps repo for deploying Docker services to a [miuOps](https://github.com/tianshanghong/miuops)-bootstrapped server.
 
-Push to `main` and GitHub Actions deploys your stacks via SSH.
+The server provides the shared infrastructure host-side — Docker, cloudflared, the firewall, the Traefik reverse proxy, and volume backups. This repo holds your user-workload stacks; push to `main` and GitHub Actions deploys them via SSH.
 
 ## Prerequisites
 
-- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuops) (Docker, cloudflared, firewall)
+- A server bootstrapped with [miuOps](https://github.com/tianshanghong/miuops) (Docker, cloudflared, firewall, Traefik, volume backups)
 - SSH access to the server (key-based)
 - GitHub repo created from this template
 
@@ -35,7 +35,9 @@ Push to `main` and GitHub Actions deploys your stacks via SSH.
 On every push to `main`:
 
 1. **Rsync** — Syncs `stacks/` to `/opt/stacks/` (deletes removed stacks, preserves `.env`)
-2. **Deploy** — Runs `docker compose up -d` for each stack (Traefik first, then the rest). After each stack, connects Traefik to the stack's per-stack ingress network.
+2. **Deploy** — Runs `docker compose up -d` for each stack directory under `/opt/stacks/`
+
+Host-side Traefik routes to each stack through that stack's `ingress` network.
 
 ## Staying Up to Date
 
@@ -67,23 +69,23 @@ projects will silently override each other.
         ANTHROPIC_API_KEY: ${MYAPP_ANTHROPIC_API_KEY}
   ```
 
-- **Shared infrastructure** — the backup S3 account (used by the offen volume backup
-  and WAL-G) uses the `BACKUP_` namespace (`BACKUP_AWS_ACCESS_KEY_ID`, …). Reference it
-  from both consumers; don't duplicate it under per-project names.
+- **Shared infrastructure** — the S3 credentials for in-stack WAL-G archiving use the
+  `BACKUP_` namespace (`BACKUP_AWS_ACCESS_KEY_ID`, …). Reference them from each database
+  stack that archives WAL; don't duplicate them under per-project names.
 
 The app-facing name stays standard (the SDK still sees `ANTHROPIC_API_KEY`) while the
 shared file stays collision-free. See `.env.example`.
 
 ### Network Model
 
-Every service must declare explicit `networks:`. Only Traefik binds host ports. Each stack gets its own isolated ingress network — stacks cannot reach each other.
+Every service must declare explicit `networks:`. No stack binds host ports — web services are reached only through their Traefik labels plus the per-stack `ingress` network. Each stack gets its own isolated `ingress` network, so stacks cannot reach each other. The default bridge is not used.
 
 **Web service** (receives traffic via Traefik):
 
 ```yaml
 services:
   myapp:
-    image: myapp:latest
+    image: myapp:1.0
     labels:
       - traefik.enable=true
       - traefik.http.routers.myapp.rule=Host(`app.example.com`)
@@ -109,10 +111,11 @@ networks:
 ```
 
 **Key rules:**
-- `ingress` — per-stack network for receiving traffic from Traefik. The deploy workflow connects Traefik to each stack's ingress network automatically. Stacks are isolated from each other.
-- `internal: true` — blocks outbound internet (use for databases, caches)
-- `egress` — plain bridge network for containers needing outbound internet access
-- No `ports:` except Traefik — all other ingress goes through Traefik labels
+- `ingress` — per-stack network that receives traffic from Traefik. Stacks are isolated from each other.
+- `internal: true` — backend services (databases, caches) use this to block outbound internet
+- `egress` — plain bridge network for containers that need outbound internet access
+- The default bridge is not used — every service joins a named network
+- No host-bound `ports:` — all ingress goes through Traefik labels. If a service must publish a port, bind it to `127.0.0.1`
 
 ### Domains & TLS
 
@@ -164,39 +167,13 @@ See `.env.example` for more examples.
 
 ### Backing Up Volumes
 
-The `backup` stack uses [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup) to upload tarballs to S3 on a daily schedule. To back up a volume, mount it into the backup container under `/backup/`:
-
-In `stacks/backup/docker-compose.yml`, add the volume to the `backup` service:
-
-```yaml
-services:
-  backup:
-    # ... existing config ...
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - db_data:/backup/myapp-db:ro
-
-volumes:
-  db_data:
-    external: true  # defined in the myapp stack
-```
-
-For database consistency, add labels to stop the container before backup:
-
-```yaml
-# In stacks/myapp/docker-compose.yml
-services:
-  db:
-    image: postgres:17
-    labels:
-      - docker-volume-backup.stop-during-backup=true
-```
+Docker volume backups are handled host-side by the miuops `backup` role (a host `systemd` timer). For PostgreSQL, use the in-stack WAL-G pattern below.
 
 ### PostgreSQL + WAL-G Continuous Archiving
 
 For PostgreSQL databases, use the pre-built [`postgres-walg`](https://github.com/tianshanghong/miuops/tree/main/images/postgres-walg) image for continuous WAL archiving to S3. It adds [WAL-G](https://github.com/wal-g/wal-g) to the official `postgres:17` image with archive mode pre-configured. WAL-G also supports MySQL, MariaDB, MongoDB, and other databases — see the [WAL-G docs](https://github.com/wal-g/wal-g#databases) to build a similar image for other engines.
 
-This runs alongside the volume backup stack — both write to the same S3 bucket under different prefixes:
+WAL-G writes to the project's S3 bucket under a `db/` prefix, one sub-prefix per app:
 
 ```
 myproject-backup/          # One bucket per project
@@ -204,8 +181,6 @@ myproject-backup/          # One bucket per project
     myapp/                 #   per-app prefix
       basebackups_005/
       wal_005/
-  vol/                     # Offen volume tarballs
-    backup-2025-01-15T02-00-00.tar.gz
 ```
 
 Example compose file using the `postgres-walg` image:
@@ -226,6 +201,7 @@ services:
       - db_data:/var/lib/postgresql/data
     networks:
       - internal
+      - egress      # WAL-G needs outbound internet to reach S3
 ```
 
 **Host cron** for daily base backups (in addition to continuous WAL archiving):
@@ -234,16 +210,11 @@ services:
 0 3 * * * cd /opt/stacks/myapp && docker compose exec -T -u postgres db walg-backup.sh
 ```
 
-#### Encrypting Backups
-
-Client-side encryption is **strongly recommended** since backups include your `.env` file (which contains secrets). The backup sidecar supports GPG and Age encryption — set one of the encryption variables in your `.env` to enable it. See the [Backup Encryption Guide](https://github.com/tianshanghong/miuops/blob/main/docs/BACKUP_ENCRYPTION.md) for setup instructions and method comparison.
-
 **Retention**: Object Lock (Governance mode, 30 days) prevents deletion without explicit override. S3 lifecycle transitions to Glacier after 30 days and expires after 90 days.
 
 ## Included Stacks
 
-- **traefik** — Reverse proxy. Listens on 80 (redirect) and 443. Cloudflared connects to 443 with `noTLSVerify`.
-- **backup** — Daily Docker volume backups to S3 via [offen/docker-volume-backup](https://github.com/offen/docker-volume-backup). No volumes are backed up by default — mount the ones you need (see above). For PostgreSQL, use the WAL-G pattern above instead of stop-during-backup.
+This template ships your user-workload stacks under `stacks/`. The Traefik reverse proxy and volume backups are host-provided by miuops, so they are not stacks here.
 
 ## License
 
