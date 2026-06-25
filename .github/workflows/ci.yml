@@ -16,6 +16,9 @@ jobs:
         # public/non-loopback published ports, privileged, host-namespace sharing, the default
         # bridge (docker0), missing cap_drop:[ALL], dangerous cap_add, sandbox-weakening
         # security_opt, sensitive bind-mounts, devices, and warns on un-pinned images.
+        # Intentionally fetched from `main` (not a pinned ref) so this template tracks the latest
+        # policy automatically. The script only reads the compose files passed as argv, and the
+        # fetch is fail-closed (`-fsSL` aborts CI on any non-200 / network error).
         run: |
           python3 -m pip install --break-system-packages --quiet pyyaml
           curl -fsSL -o "$RUNNER_TEMP/stack_policy_check.py" \
