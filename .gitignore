@@ -1,4 +1,19 @@
-# Environment files
+# Fleet secrets — fleet/secrets/ holds the SOPS-ENCRYPTED app env
+# (<server>.env) and tunnel credential (<tunnel_id>.json). The encrypted form IS
+# committed (it is only readable with your age/YubiKey key), so we ignore the
+# directory broadly and then re-allow the encrypted files.
+fleet/secrets/*
+!fleet/secrets/.gitkeep
+!fleet/secrets/*.json
+!fleet/secrets/*.env
+
+# NEVER commit decrypted plaintext. Any local scratch drop from `sops -d`
+# (e.g. *.dec, *.plain) stays out of git so a cleartext secret can't leak —
+# un-anchored so it applies anywhere in the tree, not only under fleet/secrets/.
+*.dec
+*.plain
+
+# Local cleartext env (the source you encrypt into fleet/secrets/<server>.env)
 .env
 
 # macOS

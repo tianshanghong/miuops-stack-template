@@ -1,0 +1,18 @@
+# SOPS encryption rules for this fleet repo.
+#
+# This repo is the AUTHORITATIVE owner of the .sops.yaml. The single rule below
+# encrypts ONLY the files under fleet/secrets/ — the per-server app env
+# (<server>.env) and the Cloudflare tunnel credential (<tunnel_id>.json). Your
+# plaintext config (fleet/inventory.ini, fleet/host_vars/*.yml) is NOT a secret
+# and stays in cleartext.
+#
+# REPLACE the placeholder recipient below with your own age public key
+# (`age-keygen` prints an `age1...` line) or a YubiKey/age-plugin recipient —
+# they are all `age1...` strings. You can list more than one `age:` recipient,
+# comma-separated, so several operators (or a backup key) can decrypt.
+#
+#   age-keygen -o ~/.config/sops/age/keys.txt      # prints "public key: age1..."
+#   sops -e -i fleet/secrets/server-01.env         # encrypt in place
+creation_rules:
+  - path_regex: ^fleet/secrets/.*\.(json|env)$
+    age: age1examplexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxq9f3w7

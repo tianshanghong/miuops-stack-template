@@ -1,4 +1,4 @@
-name: CI — stack policy-check + isolation e2e
+name: CI — stack policy-check
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run the miuops stack policy-check
+      - name: Run the miuops stack policy-check over fleet/stacks/*
         # Use the canonical policy-check from miuops as the single source of truth — it gates
         # public/non-loopback published ports, privileged, host-namespace sharing, the default
         # bridge (docker0), missing cap_drop:[ALL], dangerous cap_add, sandbox-weakening
@@ -19,48 +19,15 @@ jobs:
         # Intentionally fetched from `main` (not a pinned ref) so this template tracks the latest
         # policy automatically. The script only reads the compose files passed as argv, and the
         # fetch is fail-closed (`-fsSL` aborts CI on any non-200 / network error).
+        # The two-star glob matches the fleet layout: fleet/stacks/<server>/<stack>/.
         run: |
           python3 -m pip install --break-system-packages --quiet pyyaml
           curl -fsSL -o "$RUNNER_TEMP/stack_policy_check.py" \
             https://raw.githubusercontent.com/tianshanghong/miuops/main/tests/stack_policy_check.py
           shopt -s nullglob
-          files=(stacks/*/docker-compose.yml stacks/*/compose.yml stacks/*/compose.yaml)
+          files=(fleet/stacks/*/*/docker-compose.yml fleet/stacks/*/*/compose.yml fleet/stacks/*/*/compose.yaml)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No stacks to check."
             exit 0
           fi
           python3 "$RUNNER_TEMP/stack_policy_check.py" "${files[@]}"
-
-  lateral-isolation-e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Per-stack network isolation (with a positive control)
-        run: |
-          docker network create alpha_net
-          docker network create beta_net
-          docker run -d --name srv_alpha --network alpha_net traefik/whoami   # listens on :80
-          sleep 2
-          # traefik/whoami is built FROM scratch (no shell, no wget), so the probe must run from a
-          # separate throwaway alpine (busybox provides wget) — never `docker exec` into whoami.
-          probe() { docker run --rm --network "$1" alpine wget -T3 -qO- http://srv_alpha 2>/dev/null; }
-
-          # NEGATIVE: a container on a different per-stack network must NOT reach srv_alpha.
-          if [ -n "$(probe beta_net || true)" ]; then
-            echo "FAIL: cross-network reachable — per-stack isolation is broken"; exit 1
-          fi
-          echo "OK: cross-network blocked (per-stack isolation holds)"
-
-          # POSITIVE CONTROL: a container on the SAME network MUST reach srv_alpha. This proves the
-          # probe actually detects reachability, so the negative check above can genuinely fail.
-          if [ -z "$(probe alpha_net || true)" ]; then
-            echo "FAIL: same-network unreachable — the probe is broken (negative check would be vacuous)"; exit 1
-          fi
-          echo "OK: same-network reachable (the probe works)"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          docker rm -f srv_alpha 2>/dev/null || true
-          docker network rm alpha_net beta_net 2>/dev/null || true

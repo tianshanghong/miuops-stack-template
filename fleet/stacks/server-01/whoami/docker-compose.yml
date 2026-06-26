@@ -1,0 +1,26 @@
+# Example stack: fleet/stacks/<server>/<stack>/docker-compose.yml
+#
+# This is a complete, policy-check-passing example. Rename "server-01" to your
+# real server handle, change the Host(...) rule to a hostname you've pointed at
+# this server's tunnel, then push to main to deploy it. Delete it once you've
+# added your own stacks.
+#
+# Conventions this template enforces (see the README "Network model"):
+#   - every service drops all Linux capabilities (cap_drop: [ALL])
+#   - no host-bound ports: web traffic arrives only via Traefik + the per-stack
+#     `ingress` network, which is isolated from every other stack
+#   - images are digest-pinned for an immutable, reproducible deploy
+services:
+  whoami:
+    image: traefik/whoami:v1.10.3@sha256:43a68d10b9dfcfc3ffbfe4dd42100dc9aeaf29b3a5636c856337a5940f1b4f1c
+    cap_drop: [ALL]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(`whoami.example.com`)
+      - traefik.http.routers.whoami.entrypoints=websecure
+      - traefik.http.services.whoami.loadbalancer.server.port=80
+    networks:
+      - ingress
+
+networks:
+  ingress: {}   # per-stack; Docker auto-prefixes it to <stack>_ingress

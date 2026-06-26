@@ -1,0 +1,21 @@
+# Per-server config: fleet/host_vars/<server>.yml
+#
+# Copy this to fleet/host_vars/server-01.yml (drop the .example suffix) and edit,
+# or let `miuops up <server> <domain...>` write it for you. This is plaintext
+# CONFIG (not a secret) and is committed — the matching tunnel credential lives
+# encrypted at fleet/secrets/<tunnel_id>.json.
+
+# Domains routed to this server's Cloudflare tunnel. Each entry gets <domain>
+# plus a one-level wildcard *.<domain> CNAME (see the README "Domains & TLS").
+domains:
+  - example.com
+
+# The Cloudflare tunnel this server runs. The credential is stored, encrypted,
+# at fleet/secrets/<tunnel_id>.json.
+tunnel_id: 00000000-0000-0000-0000-000000000000
+
+# Optional: extra deploy public keys authorised to deploy to this server, beyond
+# the keypair `miuops up` provisions. List PUBLIC keys only — never a private
+# key. The tool installs these into the deploy user's authorized_keys.
+# deploy_public_keys:
+#   - "ssh-ed25519 AAAA... teammate@laptop"

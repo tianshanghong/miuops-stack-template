@@ -1,109 +1,16 @@
-name: Deploy stacks
+name: Deploy
 
 on:
   push:
     branches: [main]
-  repository_dispatch:
-    types: [deploy]
+  workflow_dispatch:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    env:
-      SSH_PORT: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
-    steps:
-      - name: Check if deploy secrets are configured
-        id: check
-        run: |
-          if [ -z "${{ secrets.SSH_HOST }}" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping deploy — SSH_HOST secret not configured"
-          fi
-
-      - uses: actions/checkout@v4
-        if: steps.check.outputs.skip != 'true'
-
-      - name: Rsync stacks to server
-        if: steps.check.outputs.skip != 'true'
-        uses: burnett01/rsync-deployments@v8
-        with:
-          switches: -avz --delete --exclude='.env'
-          path: stacks/
-          remote_path: /opt/stacks/
-          remote_host: ${{ secrets.SSH_HOST }}
-          remote_user: ${{ secrets.SSH_USER }}
-          remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
-          remote_port: ${{ env.SSH_PORT }}
-
-      - name: Deploy stacks
-        if: steps.check.outputs.skip != 'true'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ env.SSH_PORT }}
-          script: |
-            set -e
-            cd /opt/stacks
-
-            # ── Registry authentication (optional) ──
-            # Auto-discover registries from .env: DOCKER_REGISTRY_<NAME>_{URL,USER,PASSWORD}
-            get_env() { sed -n "s/^${1}=//p" .env; }
-
-            grep '^DOCKER_REGISTRY_.*_PASSWORD=' .env 2>/dev/null \
-              | sed 's/^DOCKER_REGISTRY_//;s/_PASSWORD=.*//' \
-              > /tmp/.registries || true
-
-            while read -r name; do
-              url=$(get_env "DOCKER_REGISTRY_${name}_URL")
-              pass=$(get_env "DOCKER_REGISTRY_${name}_PASSWORD")
-              if [ -n "$pass" ] && [ -n "$url" ]; then
-                echo "==> Logging in to $url"
-                echo "$pass" | docker login "$url" -u "$(get_env "DOCKER_REGISTRY_${name}_USER")" --password-stdin
-              fi
-            done < /tmp/.registries
-            rm -f /tmp/.registries
-
-            # Deploy each stack
-            for stack in */; do
-              stack="${stack%/}"
-              [ -f "$stack/docker-compose.yml" ] || continue
-              echo "==> Deploying $stack"
-              docker compose -f "$stack/docker-compose.yml" --env-file .env up -d --pull always --remove-orphans
-            done
-
-            # Tear down removed stacks
-            # docker compose ls shows running projects; compare against stack dirs
-            STACKS_DIR="/opt/stacks"
-            teardown_failed=0
-
-            removed=$(docker compose ls --format json | python3 -c "
-            import json, sys, os
-            try:
-                stacks_dir = '$STACKS_DIR'
-                stacks = {d for d in os.listdir(stacks_dir) if os.path.isdir(os.path.join(stacks_dir, d))}
-                projects = json.load(sys.stdin)
-                for p in projects:
-                    config = p.get('ConfigFiles', '')
-                    if not config.startswith(stacks_dir + '/'):
-                        continue
-                    name = p['Name']
-                    if name not in stacks:
-                        print(name)
-            except Exception as e:
-                print(str(e), file=sys.stderr)
-                sys.exit(1)
-            ") || { echo "::error::Failed to determine removed stacks"; teardown_failed=1; }
-
-            if [ "$teardown_failed" = "0" ] && [ -n "$removed" ]; then
-              while read -r name; do
-                echo "==> Tearing down removed stack: $name"
-                docker compose -p "$name" down --remove-orphans || { echo "::error::Failed to tear down $name"; teardown_failed=1; }
-              done <<< "$removed"
-            fi
-
-            if [ "$teardown_failed" = "1" ]; then
-              echo "::error::One or more teardown operations failed"
-              exit 1
-            fi
+    # Delegates the entire deploy (discover changed servers, sync each
+    # fleet/stacks/<server>/ over SSH, bring its stacks up) to the miuops
+    # reusable workflow. It is pinned to an IMMUTABLE tag, never @main: the
+    # workflow holds an SSH deploy key, so a mutable ref would let an upstream
+    # change take over every adopter's server. Bump this tag when you upgrade.
+    uses: tianshanghong/miuops/.github/workflows/deploy.yml@v0.1.0
+    secrets: inherit
