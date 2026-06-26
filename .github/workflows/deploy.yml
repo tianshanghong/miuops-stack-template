@@ -13,4 +13,9 @@ jobs:
     # workflow holds an SSH deploy key, so a mutable ref would let an upstream
     # change take over every adopter's server. Bump this tag when you upgrade.
     uses: tianshanghong/miuops/.github/workflows/deploy.yml@v0.1.0
+    with:
+      # Must match the @ref above. The reusable workflow loads its deploy scripts
+      # from miuops at this ref (the same immutable version as the workflow). Bump
+      # both together when you upgrade.
+      miuops_ref: v0.1.0
     secrets: inherit
