@@ -42,7 +42,8 @@ assert() {
 # --- optional mutation harness (proves assertions can fail) -------------------
 MUTATIONS="caller_tag caller_secrets caller_machinery sops_regex \
 gitignore_allow gitignore_block stack_policy stack_depth sync_gone \
-old_stacks_gone example_present readme_known_hosts"
+old_stacks_gone example_present readme_known_hosts \
+group_vars_example readme_deployed_vars readme_observability group_vars_token_bridge"
 
 if [ "${1:-}" = "--list-mutations" ]; then
   echo "Available mutations (run as MUTATE=<name>):"
@@ -69,6 +70,10 @@ if [ -n "${MUTATE:-}" ]; then
     sync_gone)        printf 'name: Sync template\n' > "$work/.github/workflows/sync-template.yml" ;;
     old_stacks_gone)  mkdir -p "$work/stacks" && touch "$work/stacks/.gitkeep" ;;
     example_present)  rm -f "$work/$EXAMPLE_STACK" ;;
+    group_vars_example)   rm -f "$work/fleet/group_vars/all.yml.example" ;;
+    readme_deployed_vars) sed -i.bak '/\.vars\.json/d' "$work/README.md" ;;
+    readme_observability) sed -i.bak '/[Oo]bservability/d' "$work/README.md" ;;
+    group_vars_token_bridge) printf 'export GRAFANA_CLOUD_TOKEN=glc_x\n' >> "$work/fleet/group_vars/all.yml.example" ;;
     *) echo "unknown mutation: $MUTATE (see --list-mutations)" >&2; exit 2 ;;
   esac
   echo "## Running oracle against MUTATED copy (MUTATE=$MUTATE) — expect FAIL"
@@ -203,6 +208,25 @@ if grep -Eq 'files=\(stacks/\*/' "$CI" 2>/dev/null; then
 else
   ok  "ci.yml does not use the old single-level stacks/*/ glob"
 fi
+
+# --- 10. ships the new deployed-secret + config model scaffolding -------------
+# group_vars/all.yml is where fleet-wide CONFIG (the Grafana Cloud obs endpoints)
+# lives; the deployed SECRETS (the Grafana token, a server's AWS backup creds) are
+# SOPS-encrypted JSON vars files the converge decrypts. The template must teach this
+# so a new adopter lands on the current model, not the pre-SOPS env bridge.
+assert "fleet/group_vars/all.yml.example exists (fleet-wide config home for obs endpoints)" \
+  test -f fleet/group_vars/all.yml.example
+assert "README documents the fleet-wide deployed secret all.vars.json (the Grafana token)" \
+  grep -Fq 'all.vars.json' README.md
+assert "README documents the per-server <server>.vars.json deployed secret (AWS backup creds)" \
+  grep -Fq '<server>.vars.json' README.md
+assert "README covers observability (on by default, shipping to Grafana Cloud)" \
+  grep -Eiq 'observability' README.md
+# Meaning-level pin (not just substring): the obs token example must send the token to
+# all.vars.json AND must NOT carry a stale `export GRAFANA_CLOUD_TOKEN` env bridge -- the
+# exact drift you'd get by copying the tool repo's (still-stale) all.yml.example.
+assert "all.yml.example sends the obs token to all.vars.json, not a stale env export" \
+  bash -c "grep -Fq 'all.vars.json' fleet/group_vars/all.yml.example && ! grep -Eqi 'export GRAFANA_CLOUD_TOKEN' fleet/group_vars/all.yml.example"
 
 # --- summary ------------------------------------------------------------------
 echo

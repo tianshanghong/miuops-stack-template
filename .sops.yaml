@@ -2,7 +2,8 @@
 #
 # This repo is the AUTHORITATIVE owner of the .sops.yaml. The single rule below
 # encrypts ONLY the files under fleet/secrets/ — the per-server app env
-# (<server>.env) and the Cloudflare tunnel credential (<tunnel_id>.json). Your
+# (<server>.env), the Cloudflare tunnel credential (<tunnel_id>.json), and the
+# deployed vars (all.vars.json, <server>.vars.json). Your
 # plaintext config (fleet/inventory.ini, fleet/host_vars/*.yml) is NOT a secret
 # and stays in cleartext.
 #

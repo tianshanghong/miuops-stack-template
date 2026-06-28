@@ -15,11 +15,15 @@ user-workload stacks and the config that places them on servers.
 ```
 fleet/
   inventory.ini                 # which servers exist (server -> host, user)
+  group_vars/
+    all.yml                     # fleet-wide config: the Grafana Cloud observability endpoints
   host_vars/
     server-01.yml               # per-server config: domains + tunnel_id
   secrets/
     server-01.env               # SOPS-encrypted app env (committed, unreadable without your key)
     <tunnel_id>.json            # SOPS-encrypted Cloudflare tunnel credential
+    all.vars.json               # SOPS-encrypted fleet-wide deployed vars (the Grafana Cloud token)
+    <server>.vars.json          # SOPS-encrypted per-server deployed vars (AWS backup credentials)
   stacks/
     server-01/                  # one directory per server
       whoami/
@@ -84,11 +88,29 @@ matches a handle in `inventory.ini`; the `<stack>` is one Docker Compose project
    git add fleet/secrets/server-01.env
    ```
 
-5. **Add a stack.** Put a compose file at `fleet/stacks/server-01/<stack>/docker-compose.yml`
+5. **Configure observability + deployed secrets.** Observability is **enabled by default** —
+   it activates as soon as you set the Grafana Cloud connection (no flag to flip); until then
+   the converge gracefully skips it. The endpoints are **config** — set them in
+   `fleet/group_vars/all.yml` (copy `group_vars/all.yml.example`). The **token** is a secret —
+   put it in `fleet/secrets/all.vars.json`. Create it with the SOPS editor so the plaintext
+   never lands on disk or in your shell history:
+
+   ```bash
+   cp fleet/group_vars/all.yml.example fleet/group_vars/all.yml   # …fill in the endpoints…
+   sops fleet/secrets/all.vars.json   # opens $EDITOR; add { "grafana_cloud_token": "glc_..." }, save → encrypted in place
+   ```
+
+   Per-server deployed secrets — e.g. a server's AWS backup credentials — go in
+   `fleet/secrets/<server>.vars.json` the same way. These are applied by the **converge**
+   (`miuops up` / `miuops apply <server>`, run from this repo — which decrypts them with your
+   age key and renders them into the on-host config with **no per-apply env**), not by the
+   stack deploy in steps 6–7. See **Secrets** below.
+
+6. **Add a stack.** Put a compose file at `fleet/stacks/server-01/<stack>/docker-compose.yml`
    (the included `whoami` example shows the shape). Point its `Host(...)` rule at a
    hostname under one of the server's domains.
 
-6. **Push to `main`.** GitHub Actions runs the policy-check, then deploys the servers whose
+7. **Push to `main`.** GitHub Actions runs the policy-check, then deploys the servers whose
    stacks changed.
 
 ## Secrets
@@ -97,6 +119,11 @@ matches a handle in `inventory.ini`; the `<stack>` is one Docker Compose project
 
 - `<server>.env` — the per-server app environment, installed to `/opt/stacks/.env`.
 - `<tunnel_id>.json` — the Cloudflare tunnel credential.
+- `all.vars.json` — fleet-wide **deployed vars**: the Grafana Cloud token. Decrypted at
+  converge and handed to Ansible, so the secret renders into the on-host config with no
+  per-apply env. Its companion config — the observability endpoints — is committed in the
+  clear in `group_vars/all.yml`.
+- `<server>.vars.json` — per-server deployed vars: that server's AWS backup credentials.
 
 `.sops.yaml` (at the repo root) is the single source of truth for what gets encrypted; its
 one rule matches `^fleet/secrets/.*\.(json|env)$` and nothing else. **Replace the
