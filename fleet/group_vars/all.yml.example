@@ -1,0 +1,21 @@
+# Fleet-wide config — group_vars/all.yml
+#
+# Values here apply to EVERY server in this fleet, committed in the clear (these are
+# CONFIG, not secrets). Per-server values go in host_vars/<server>.yml instead.
+# Copy this file to fleet/group_vars/all.yml and fill it in.
+
+# --- Grafana Cloud observability (shared by the whole fleet) -------------------
+# The push endpoints + user IDs are CONFIG (not secret) and identical across servers,
+# so they live here — versioned, never via per-apply env. Observability is ENABLED BY
+# DEFAULT but inert until you set the Prometheus endpoint below — until then the converge
+# gracefully skips it. Once set, the role is active and REQUIRES all four endpoints PLUS
+# the token (in all.vars.json), failing the converge LOUD if any one is missing.
+# Uncomment and fill from your Grafana Cloud stack's "Connections" details:
+# observability_enabled: true
+# grafana_cloud_prometheus_url:  "https://prometheus-prod-XX.grafana.net/api/prom/push"
+# grafana_cloud_prometheus_user: "1234567"
+# grafana_cloud_loki_url:        "https://logs-prod-XX.grafana.net/loki/api/v1/push"
+# grafana_cloud_loki_user:       "1234567"
+#
+# The TOKEN is a SECRET — it does NOT go here. Put it in fleet/secrets/all.vars.json
+# (SOPS-encrypted, decrypted at converge with your age key). See the README's "Secrets".
