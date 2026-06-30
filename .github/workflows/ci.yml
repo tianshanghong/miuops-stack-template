@@ -31,3 +31,15 @@ jobs:
             exit 0
           fi
           python3 "$RUNNER_TEMP/stack_policy_check.py" "${files[@]}"
+
+      - name: No self-managed DB-backup references (managed Postgres only)
+        # Databases are outsourced to managed Postgres (the app sets DATABASE_URL); no stack
+        # carries a backup container or key. Fail the build on any dangling WAL-G / S3 db-prefix
+        # reference. The pattern is anchored to an s3:// URL or the <server> placeholder so it
+        # can't false-match an unrelated filesystem path. Excludes this workflow (it names them).
+        run: |
+          if git grep -niIE 'wal-?g|s3://[^ ]*/db/|<server>/db/' -- . ':!.github/workflows/ci.yml'; then
+            echo "::error::dangling self-managed DB-backup reference — databases use managed Postgres (DATABASE_URL)"
+            exit 1
+          fi
+          echo "grep-clean: no WAL-G / S3 db-prefix references"

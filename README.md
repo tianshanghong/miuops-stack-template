@@ -192,10 +192,6 @@ each other.
         ANTHROPIC_API_KEY: ${MYAPP_ANTHROPIC_API_KEY}
   ```
 
-- **Shared infrastructure** — the S3 credentials for in-stack WAL-G archiving use the
-  `BACKUP_` namespace (`BACKUP_AWS_ACCESS_KEY_ID`, …). Reference them from each database
-  stack that archives WAL; don't duplicate them under per-project names.
-
 The app-facing name stays standard (the SDK still sees `ANTHROPIC_API_KEY`) while the
 shared file stays collision-free. See `.env.example`.
 
@@ -300,65 +296,18 @@ See `.env.example` for more examples.
 ### Backing up volumes
 
 Docker volume backups are handled host-side by the miuOps `backup` role (a host `systemd`
-timer). For PostgreSQL, use the in-stack WAL-G pattern below.
+timer) — no in-stack backup container, no backup key in a stack `.env`.
 
-### PostgreSQL + WAL-G continuous archiving
+### Databases
 
-For PostgreSQL databases, use the pre-built
-[`postgres-walg`](https://github.com/tianshanghong/miuops/tree/main/images/postgres-walg)
-image for continuous WAL archiving to S3. It adds [WAL-G](https://github.com/wal-g/wal-g) to
-the official `postgres` image with archive mode pre-configured. WAL-G also supports MySQL,
-MariaDB, MongoDB, and other databases — see the [WAL-G docs](https://github.com/wal-g/wal-g#databases)
-to build a similar image for other engines.
+Databases are outsourced to **managed Postgres** (set the app's `DATABASE_URL` to the
+managed instance). miuOps does not back up databases — use your managed provider's
+point-in-time recovery. A workload stack is a pure workload: it carries no backup
+container and no S3/backup key.
 
-WAL-G writes to the project's S3 bucket under a `db/` prefix, one sub-prefix per app:
-
-```
-myproject-backup/          # One bucket per project
-  db/                      # WAL-G database backups
-    myapp/                 #   per-app prefix
-      basebackups_005/
-      wal_005/
-```
-
-Example compose file using the `postgres-walg` image:
-
-```yaml
-services:
-  db:
-    image: ghcr.io/tianshanghong/postgres-walg@sha256:…
-    cap_drop: [ALL]
-    environment:
-      POSTGRES_DB: myapp
-      POSTGRES_USER: myapp
-      POSTGRES_PASSWORD: ${MYAPP_DB_PASSWORD}
-      WALG_S3_PREFIX: ${MYAPP_WALG_S3_PREFIX}
-      AWS_ACCESS_KEY_ID: ${BACKUP_AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${BACKUP_AWS_SECRET_ACCESS_KEY}
-      AWS_REGION: ${BACKUP_AWS_REGION}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    networks:
-      - internal
-      - egress      # WAL-G needs outbound internet to reach S3
-
-volumes:
-  db_data:
-
-networks:
-  internal:
-    internal: true   # no outbound internet
-  egress:            # plain bridge: outbound internet (so WAL-G reaches S3)
-```
-
-**Host cron** for daily base backups (in addition to continuous WAL archiving):
-
-```
-0 3 * * * cd /opt/stacks/myapp && docker compose exec -T -u postgres db walg-backup.sh
-```
-
-**Retention**: Object Lock (Governance mode, 30 days) prevents deletion without explicit
-override. S3 lifecycle transitions to Glacier after 30 days and expires after 90 days.
+**Retention** (volume backups): Object Lock (Governance mode, 30 days) prevents deletion
+without explicit override. S3 lifecycle transitions to Glacier after 30 days and expires
+after 90 days.
 
 ## CI policy-check
 
